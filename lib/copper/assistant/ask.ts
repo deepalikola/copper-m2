@@ -41,6 +41,14 @@ const requestSchema = z.object({
   useTools: z.boolean(),
 });
 
+/** Prints why a question failed (the message only) to the terminal running the app. */
+function logFailure(error: unknown) {
+  console.error(
+    "[ask-copper] question failed:",
+    error instanceof Error ? error.message : String(error),
+  );
+}
+
 /** A copy of the progress so far, safe to hand out while the original keeps changing. */
 function copyOf(progress: Progress): Progress {
   return {
@@ -135,6 +143,7 @@ export async function askCopper(
             progress.reply += part.text;
             break;
           case "error":
+            logFailure(part.error);
             return finish("error");
           default:
             continue;
@@ -142,7 +151,8 @@ export async function askCopper(
         update(copyOf(progress));
       }
       finish("done");
-    } catch {
+    } catch (error) {
+      logFailure(error);
       finish("error");
     }
   })();
