@@ -1,7 +1,7 @@
 // Module 1: the landing page. Fast checks that render the page in jsdom; the
 // responsive layout and design are reviewed by hand (DESIGN in rubric.md).
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { cleanup, render, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -74,10 +74,12 @@ const imageSource = (img: HTMLImageElement) => {
 const sources = (element: HTMLElement) =>
   [...element.querySelectorAll("img")].map(imageSource);
 
+// Always "/" between folders, whatever the OS: the checks below match on
+// paths, and join() would hand back backslashes on Windows.
 const filesUnder = (dir: string): string[] =>
   existsSync(dir)
     ? readdirSync(dir, { recursive: true, encoding: "utf8" }).map((f) =>
-        join(dir, f),
+        join(dir, f).split(sep).join("/"),
       )
     : [];
 
@@ -136,7 +138,7 @@ describe("Module 1: landing page", () => {
     const routes = filesUnder("app").filter((file) =>
       /(^|\/)(page|route)\.(t|j)sx?$/.test(file),
     );
-    expect(routes).toEqual([join("app", "page.tsx")]);
+    expect(routes).toEqual(["app/page.tsx"]);
     expect(existsSync("pages")).toBe(false);
   });
 
