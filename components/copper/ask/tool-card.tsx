@@ -37,6 +37,22 @@ function formatDate(iso: string): string {
 const productName = (id: unknown) =>
   getProducts().find((product) => product.id === id)?.name ?? String(id);
 
+const WHERE_LABELS: Record<string, string> = {
+  at_home: "At home",
+  on_the_go: "On the go",
+};
+
+const JOB_LABELS: Record<string, string> = {
+  home_control: "Smart-home control",
+  household_memory: "Household memory",
+  storm_alerts: "Storm alerts",
+  meetings: "Meetings",
+  lectures: "Lectures",
+};
+
+const labelOf = (labels: Record<string, string>, value: unknown) =>
+  typeof value === "string" ? (labels[value] ?? value) : "Not answered yet";
+
 const PLAN_NAMES: Record<string, string> = {
   free: "Free",
   "copper-plus": "Copper Plus",
@@ -103,6 +119,22 @@ function Sent({ tool, input }: { tool: string; input: unknown }) {
           ["Plan", PLAN_NAMES[String(input.plan)] ?? String(input.plan)],
           ["Billing", String(input.billing)],
           ["Years", String(input.years)],
+        ]}
+      />
+    );
+  }
+  if (tool === "recommend_product") {
+    return (
+      <Rows
+        rows={[
+          ["Where", labelOf(WHERE_LABELS, input.where)],
+          ["Main job", labelOf(JOB_LABELS, input.job)],
+          [
+            "Budget",
+            typeof input.maxBudgetUsd === "number"
+              ? formatUsd(input.maxBudgetUsd)
+              : "Not given",
+          ],
         ]}
       />
     );
@@ -216,6 +248,64 @@ function Result({ tool, output }: { tool: string; output: unknown }) {
           ))}
       </div>
     );
+  }
+
+  if (tool === "recommend_product") {
+    if (output.status === "needs_answers" && Array.isArray(output.questions)) {
+      return (
+        <div className="flex flex-col gap-2 text-sm">
+          <p className="text-muted-foreground">Questions Copper should ask:</p>
+          {(output.questions as Obj[]).map((question) => (
+            <div key={String(question.id)}>
+              <p className="font-semibold">{String(question.question)}</p>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {(Array.isArray(question.options)
+                  ? (question.options as Obj[])
+                  : []
+                ).map((option) => (
+                  <Pill key={String(option.value)} className="bg-accent/30">
+                    {String(option.label)}
+                  </Pill>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    if (
+      output.status === "recommendation" &&
+      isObj(output.product) &&
+      isObj(output.why)
+    ) {
+      const also = isObj(output.alsoConsider) ? output.alsoConsider : null;
+      return (
+        <div className="flex flex-col gap-1 text-sm">
+          <p className="text-primary text-lg font-extrabold">
+            {String(output.product.name)} ·{" "}
+            {formatUsd(Number(output.product.priceUsd))}
+          </p>
+          <p>
+            <span className="font-semibold">{String(output.why.feature)}.</span>{" "}
+            <span className="text-muted-foreground">
+              {String(output.why.description)}
+            </span>
+          </p>
+          {typeof output.fitNote === "string" && (
+            <p className="text-muted-foreground">{output.fitNote}</p>
+          )}
+          {typeof output.budgetNote === "string" && (
+            <p className="text-muted-foreground">{output.budgetNote}</p>
+          )}
+          {also && (
+            <p className="text-muted-foreground text-xs">
+              Also consider: {String(also.name)} ·{" "}
+              {formatUsd(Number(also.priceUsd))}
+            </p>
+          )}
+        </div>
+      );
+    }
   }
 
   if (tool === "check_availability") {

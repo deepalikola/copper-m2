@@ -5,6 +5,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import {
+  formatUsd,
   getPlans,
   getProducts,
   type Plan,
@@ -63,6 +64,47 @@ const PRODUCT_IDS = ["copper-home", "copper-notes"] as const;
 function toCents(amount: number): number {
   return Math.round((amount + Number.EPSILON) * 100) / 100;
 }
+
+export type RecommendWhere = "at_home" | "on_the_go";
+export type RecommendJob =
+  | "home_control"
+  | "household_memory"
+  | "storm_alerts"
+  | "meetings"
+  | "lectures";
+
+export type RecommendProductInput = {
+  where?: RecommendWhere;
+  job?: RecommendJob;
+  maxBudgetUsd?: number;
+};
+
+export type RecommendQuestion = {
+  id: "where" | "job";
+  question: string;
+  options: { value: string; label: string }[];
+};
+
+export type Recommendation =
+  | { status: "needs_answers"; questions: RecommendQuestion[] }
+  | {
+      status: "recommendation";
+      product: {
+        id: ProductId;
+        name: string;
+        type: string;
+        priceUsd: number;
+        colors: string[];
+      };
+      /** The catalog feature that fits what the shopper wants to do. */
+      why: { feature: string; description: string };
+      otherFeatures: string[];
+      fit: "great" | "partial";
+      fitNote: string | null;
+      withinBudget: boolean | null;
+      budgetNote: string | null;
+      alsoConsider: { id: ProductId; name: string; priceUsd: number };
+    };
 
 /** get_products: what Copper sells and which colors each one comes in. */
 export function listProducts(): ProductList {
@@ -196,6 +238,148 @@ export async function checkAvailability(
   return { status: "ok", product: product.name, colors };
 }
 
+// recommend_product: the questions Copper asks a shopper who can't decide, and
+// what each answer points to. The product facts come from the catalog; only the
+// mapping from "what do you want to do?" to a catalog feature lives here.
+const WHERE_OPTIONS = [
+  { value: "at_home", label: "At home" },
+  { value: "on_the_go", label: "On the go (meetings, class, coffee shops)" },
+] as const;
+
+const JOBS: Record<
+  RecommendJob,
+  { productId: ProductId; feature: string; label: string }
+> = {
+  home_control: {
+    productId: "copper-home",
+    feature: "Smart-home control",
+    label: "Control my lights, thermostat, sprinklers and garage",
+  },
+  household_memory: {
+    productId: "copper-home",
+    feature: "Household Memory",
+    label: "Remember household things for me",
+  },
+  storm_alerts: {
+    productId: "copper-home",
+    feature: "Monsoon Mode",
+    label: "Warn me about storms and protect the yard",
+  },
+  meetings: {
+    productId: "copper-notes",
+    feature: "Meeting Mode",
+    label: "Summarize my meetings",
+  },
+  lectures: {
+    productId: "copper-notes",
+    feature: "Lecture Mode",
+    label: "Take notes in lectures",
+  },
+};
+
+const WHERE_PRODUCT: Record<RecommendWhere, ProductId> = {
+  at_home: "copper-home",
+  on_the_go: "copper-notes",
+};
+
+const RECOMMEND_QUESTIONS: Record<"where" | "job", RecommendQuestion> = {
+  where: {
+    id: "where",
+    question: "Where will you use it most?",
+    options: [...WHERE_OPTIONS],
+  },
+  job: {
+    id: "job",
+    question: "What's the main thing you want help with?",
+    options: Object.entries(JOBS).map(([value, { label }]) => ({
+      value,
+      label,
+    })),
+  },
+};
+
+/** The recommend_product contract: three optional answers, nothing else. */
+export const recommendProductInput: z.ZodType<RecommendProductInput> =
+  z.strictObject({
+    where: z.enum(["at_home", "on_the_go"]).optional(),
+    job: z
+      .enum([
+        "home_control",
+        "household_memory",
+        "storm_alerts",
+        "meetings",
+        "lectures",
+      ])
+      .optional(),
+    maxBudgetUsd: z.number().min(0).max(10000).optional(),
+  });
+
+/**
+ * recommend_product: asks for what it still needs to know, then points the
+ * shopper to the product that fits. Copper puts the questions to the shopper
+ * in chat and calls this again with their answers.
+ */
+export function recommendProduct(input: RecommendProductInput): Recommendation {
+  const missing = (["where", "job"] as const).filter((id) => !input[id]);
+  if (missing.length > 0) {
+    return {
+      status: "needs_answers",
+      questions: missing.map((id) => RECOMMEND_QUESTIONS[id]),
+    };
+  }
+
+  const catalog = getProducts();
+  const find = (id: ProductId) => catalog.find((product) => product.id === id)!;
+
+  // What they want to do decides it; where they'll use it says how well it fits.
+  const job = JOBS[input.job!];
+  const product = find(job.productId);
+  const other = find(
+    job.productId === "copper-home" ? "copper-notes" : "copper-home",
+  );
+  const matched = product.features.find(
+    (feature) => feature.name === job.feature,
+  )!;
+  const fits = WHERE_PRODUCT[input.where!] === product.id;
+
+  const withinBudget =
+    input.maxBudgetUsd === undefined
+      ? null
+      : product.priceUsd <= input.maxBudgetUsd;
+  const budgetNote =
+    withinBudget === false
+      ? `${product.name} costs ${formatUsd(product.priceUsd)}, which is above your ${formatUsd(input.maxBudgetUsd!)} budget.${
+          other.priceUsd <= input.maxBudgetUsd!
+            ? ` ${other.name} is ${formatUsd(other.priceUsd)}, but it does a different job.`
+            : ""
+        }`
+      : null;
+
+  return {
+    status: "recommendation",
+    product: {
+      id: product.id,
+      name: product.name,
+      type: product.type,
+      priceUsd: product.priceUsd,
+      colors: product.colors,
+    },
+    why: { feature: matched.name, description: matched.description },
+    otherFeatures: product.features
+      .filter((feature) => feature.name !== matched.name)
+      .map((feature) => feature.name),
+    fit: fits ? "great" : "partial",
+    fitNote: fits
+      ? null
+      : `You said you'd use it ${
+          input.where === "at_home" ? "at home" : "on the go"
+        }, but ${product.name} is the one built for "${job.label.toLowerCase()}".`,
+    withinBudget,
+    budgetNote,
+    alsoConsider: { id: other.id, name: other.name, priceUsd: other.priceUsd },
+  };
+}
+
 /** The tools the model can call. Each description tells the model when to use it. */
 export const copperTools = {
   get_products: tool({
@@ -221,5 +405,11 @@ export const copperTools = {
       "Check today's stock for a Copper product, or one color of it: in stock, low stock, or back-ordered with its restock date.",
     inputSchema: checkAvailabilityInput,
     execute: async (input) => checkAvailability(input),
+  }),
+  recommend_product: tool({
+    description:
+      "Help a shopper who can't decide between Copper Home and Copper Notes: with no answers it returns the questions to ask them (where they'll use it, what they want help with), and once you pass their answers it returns the product that fits and why.",
+    inputSchema: recommendProductInput,
+    execute: async (input) => recommendProduct(input),
   }),
 };
