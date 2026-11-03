@@ -27,39 +27,69 @@ afterEach(() => {
   vi.resetModules();
 });
 
+type Rec = Extract<
+  ReturnType<typeof import("@/lib/copper/assistant/tools").recommendProduct>,
+  { status: "recommendation" }
+>;
+
+async function recommend(
+  input: Parameters<
+    typeof import("@/lib/copper/assistant/tools").recommendProduct
+  >[0],
+) {
+  const { recommendProduct } = await loadTools();
+  const result = recommendProduct(input);
+  expect(result.status).toBe("recommendation");
+  return result as Rec;
+}
+
 describe("recommend_product", () => {
-  it("asks both questions when it knows nothing yet", async () => {
+  it("first asks who the shopper is", async () => {
     const { recommendProduct } = await loadTools();
     const result = recommendProduct({});
     expect(result.status).toBe("needs_answers");
     if (result.status !== "needs_answers") return;
-    expect(result.questions.map((q) => q.id)).toEqual(["where", "job"]);
+    expect(result.questions).toHaveLength(1);
+    expect(result.questions[0].id).toBe("who");
     expect(result.questions[0].options.map((o) => o.value)).toEqual([
-      "at_home",
-      "on_the_go",
-    ]);
-    expect(result.questions[1].options.map((o) => o.value)).toEqual([
-      "home_control",
-      "household_memory",
-      "storm_alerts",
-      "meetings",
-      "lectures",
+      "homemaker",
+      "retiree_snowbird",
+      "student",
+      "professional",
+      "heavy_ai_user",
     ]);
   });
 
-  it("only asks what is still missing", async () => {
+  it("then asks only the jobs that fit that kind of shopper", async () => {
     const { recommendProduct } = await loadTools();
-    const result = recommendProduct({ where: "on_the_go" });
+    const result = recommendProduct({ who: "homemaker" });
     expect(result.status).toBe("needs_answers");
     if (result.status !== "needs_answers") return;
-    expect(result.questions.map((q) => q.id)).toEqual(["job"]);
+    expect(result.questions[0].id).toBe("job");
+    expect(result.questions[0].options.map((o) => o.value)).toEqual([
+      "lists_and_reminders",
+      "run_the_house",
+      "weather_alerts",
+      "planning_and_ideas",
+    ]);
   });
 
-  it("points a lecture-taker on the go to Copper Notes, with the catalog's own words", async () => {
+  it("asks again when the job doesn't fit who they are", async () => {
     const { recommendProduct } = await loadTools();
-    const result = recommendProduct({ where: "on_the_go", job: "lectures" });
-    expect(result.status).toBe("recommendation");
-    if (result.status !== "recommendation") return;
+    const result = recommendProduct({
+      who: "student",
+      job: "meeting_summaries",
+    });
+    expect(result.status).toBe("needs_answers");
+    if (result.status !== "needs_answers") return;
+    expect(result.questions[0].options.map((o) => o.value)).toEqual([
+      "lecture_notes",
+      "quick_ideas",
+    ]);
+  });
+
+  it("points a student who wants lecture notes to Copper Notes, in the catalog's words", async () => {
+    const result = await recommend({ who: "student", job: "lecture_notes" });
     expect(result.product).toMatchObject({
       id: "copper-notes",
       name: "Copper Notes",
@@ -67,72 +97,134 @@ describe("recommend_product", () => {
       colors: ["Brushed Copper", "Desert Sand", "Night Sky"],
     });
     expect(result.why.feature).toBe("Lecture Mode");
-    expect(result.why.description).toMatch(/notes/i);
-    expect(result.otherFeatures).toEqual(["Meeting Mode", "Consent Chime"]);
-    expect(result.fit).toBe("great");
-    expect(result.fitNote).toBeNull();
+    expect(result.why.description).toMatch(/key terms/i);
+    expect(result.examples.map((e) => e.result).join(" ")).toMatch(
+      /Consent Chime/,
+    );
+    expect(result.plus).toBeNull();
     expect(result.alsoConsider).toMatchObject({
       id: "copper-home",
       priceUsd: 149,
     });
   });
 
-  it("points home-control at home to Copper Home", async () => {
-    const { recommendProduct } = await loadTools();
-    const result = recommendProduct({ where: "at_home", job: "home_control" });
-    expect(result).toMatchObject({
-      status: "recommendation",
-      product: { id: "copper-home", priceUsd: 149 },
-      why: { feature: "Smart-home control" },
-      fit: "great",
+  it("shows a homemaker real list and reminder examples with Copper Home", async () => {
+    const result = await recommend({
+      who: "homemaker",
+      job: "lists_and_reminders",
     });
+    expect(result.product).toMatchObject({ id: "copper-home", priceUsd: 149 });
+    expect(result.why.feature).toBe("Household Memory");
+    const said = result.examples.map((e) => e.say).join(" | ");
+    expect(said).toContain("add coriander to the shopping list");
+    expect(said).toContain("pool guy comes Thursdays");
+    expect(JSON.stringify(result.examples)).toContain(
+      "delete it in the Copper app",
+    );
   });
 
-  it("sends storm alerts and household memory to Copper Home, and meetings to Copper Notes", async () => {
-    const { recommendProduct } = await loadTools();
-    const pick = (job: Parameters<typeof recommendProduct>[0]["job"]) => {
-      const result = recommendProduct({ where: "at_home", job });
-      return result.status === "recommendation" ? result.product.id : null;
-    };
-    expect(pick("storm_alerts")).toBe("copper-home");
-    expect(pick("household_memory")).toBe("copper-home");
-    expect(pick("meetings")).toBe("copper-notes");
+  it("covers the Arizona weather features for weather alerts", async () => {
+    const result = await recommend({ who: "homemaker", job: "weather_alerts" });
+    expect(result.why.feature).toBe("Monsoon Mode");
+    const text = JSON.stringify(result.examples);
+    expect(text).toContain("Haboob Alert");
+    expect(text).toContain("Heat Check");
+    expect(text).toContain("pets");
   });
 
-  it("lets what they want to do decide, and says so when the place doesn't match", async () => {
+  it("includes dinner ideas and trip planning, and says planning uses Copper Plus", async () => {
+    const result = await recommend({
+      who: "homemaker",
+      job: "planning_and_ideas",
+    });
+    const said = result.examples.map((e) => e.say).join(" | ");
+    expect(said).toContain("What can I cook tonight?");
+    expect(said).toContain("Sedona");
+    expect(result.plus).toMatchObject({ required: false });
+    expect(result.plus?.priceNote).toContain("$7.99/month");
+    expect(result.plus?.priceNote).toContain("$79/year");
+  });
+
+  it("sends each kind of shopper to the right product", async () => {
+    const cases = [
+      ["retiree_snowbird", "away_for_summer", "copper-home", "Snowbird Mode"],
+      ["student", "quick_ideas", "copper-notes", "Idea Mode"],
+      ["professional", "meeting_summaries", "copper-notes", "Meeting Mode"],
+      [
+        "professional",
+        "searchable_history",
+        "copper-notes",
+        "Searchable meeting history",
+      ],
+      ["heavy_ai_user", "complex_questions", "copper-home", "Refined answers"],
+      [
+        "heavy_ai_user",
+        "long_summaries",
+        "copper-notes",
+        "Long-form summaries",
+      ],
+    ] as const;
+    for (const [who, job, product, feature] of cases) {
+      const result = await recommend({ who, job });
+      expect(result.product.id, `${who} / ${job}`).toBe(product);
+      expect(result.why.feature, `${who} / ${job}`).toBe(feature);
+    }
+  });
+
+  it("says when a job needs Copper Plus", async () => {
+    for (const [who, job] of [
+      ["professional", "searchable_history"],
+      ["heavy_ai_user", "complex_questions"],
+      ["heavy_ai_user", "long_summaries"],
+    ] as const) {
+      const result = await recommend({ who, job });
+      expect(result.plus?.required, `${who} / ${job}`).toBe(true);
+    }
+  });
+
+  it("never shows a made-up statistic or promises podcasts", async () => {
     const { recommendProduct } = await loadTools();
-    const result = recommendProduct({ where: "at_home", job: "lectures" });
-    expect(result.status).toBe("recommendation");
-    if (result.status !== "recommendation") return;
-    expect(result.product.id).toBe("copper-notes");
-    expect(result.fit).toBe("partial");
-    expect(result.fitNote).toContain("at home");
-    expect(result.fitNote).toContain("Copper Notes");
+    const whos = [
+      "homemaker",
+      "retiree_snowbird",
+      "student",
+      "professional",
+      "heavy_ai_user",
+    ] as const;
+    for (const who of whos) {
+      const questions = recommendProduct({ who });
+      if (questions.status !== "needs_answers")
+        throw new Error("expected a question");
+      for (const option of questions.questions[0].options) {
+        const text = JSON.stringify(
+          recommendProduct({ who, job: option.value as never }),
+        );
+        expect(text, `${who} / ${option.value}`).not.toMatch(/\d+\s?%/);
+        expect(text, `${who} / ${option.value}`).not.toMatch(
+          /podcast|chefs?\b|prefer/i,
+        );
+      }
+    }
   });
 
   it("flags a budget that is too low, and names the cheaper device", async () => {
-    const { recommendProduct } = await loadTools();
-    const tight = recommendProduct({
-      where: "at_home",
-      job: "home_control",
+    const tight = await recommend({
+      who: "homemaker",
+      job: "run_the_house",
       maxBudgetUsd: 135,
     });
-    expect(tight).toMatchObject({
-      status: "recommendation",
-      withinBudget: false,
-    });
-    if (tight.status !== "recommendation") return;
+    expect(tight.withinBudget).toBe(false);
     expect(tight.budgetNote).toContain("$149");
     expect(tight.budgetNote).toContain("$135");
     expect(tight.budgetNote).toContain("Copper Notes is $129");
 
-    const roomy = recommendProduct({
-      where: "at_home",
-      job: "home_control",
+    const roomy = await recommend({
+      who: "homemaker",
+      job: "run_the_house",
       maxBudgetUsd: 200,
     });
     expect(roomy).toMatchObject({ withinBudget: true, budgetNote: null });
-    const none = recommendProduct({ where: "at_home", job: "home_control" });
+    const none = await recommend({ who: "homemaker", job: "run_the_house" });
     expect(none).toMatchObject({ withinBudget: null, budgetNote: null });
   });
 
@@ -144,29 +236,39 @@ describe("recommend_product", () => {
         ...real,
         getProducts: () =>
           real.getProducts().map((p) => ({ ...p, priceUsd: p.priceUsd + 50 })),
+        getPlans: () =>
+          real
+            .getPlans()
+            .map((p) =>
+              p.id === "copper-plus"
+                ? { ...p, monthlyUsd: 9.49, annualUsd: 95 }
+                : p,
+            ),
       };
     });
-    const { recommendProduct } = await loadTools();
-    const result = recommendProduct({ where: "on_the_go", job: "meetings" });
-    expect(result).toMatchObject({
-      status: "recommendation",
-      product: { id: "copper-notes", priceUsd: 179 },
-      alsoConsider: { priceUsd: 199 },
+    const result = await recommend({
+      who: "professional",
+      job: "searchable_history",
     });
-    expect(JSON.stringify(result)).not.toContain("129");
+    expect(result.product.priceUsd).toBe(179);
+    expect(result.alsoConsider.priceUsd).toBe(199);
+    expect(result.plus?.priceNote).toContain("$9.49/month");
+    expect(result.plus?.priceNote).toContain("$95/year");
+    expect(JSON.stringify(result)).not.toMatch(/\$129|\$149|\$7\.99|\$79\b/);
   });
 
   it("rejects input outside its contract", async () => {
     const { recommendProductInput } = await loadTools();
-    const ok = { where: "at_home", job: "meetings", maxBudgetUsd: 150 };
+    const ok = { who: "student", job: "lecture_notes", maxBudgetUsd: 150 };
     expect(recommendProductInput.safeParse({}).success).toBe(true);
     expect(recommendProductInput.safeParse(ok).success).toBe(true);
     const bad = [
-      { ...ok, where: "in_space" },
+      { ...ok, who: "astronaut" },
       { ...ok, job: "gaming" },
       { ...ok, maxBudgetUsd: -1 },
       { ...ok, maxBudgetUsd: "cheap" },
       { ...ok, color: "Night Sky" },
+      { ...ok, where: "at_home" },
     ];
     for (const input of bad) {
       expect(
@@ -278,21 +380,21 @@ describe("Ask Copper with the fifth tool", () => {
     expect(call.name).toBe("recommend_product");
     expect(call.output).toMatchObject({
       status: "needs_answers",
-      questions: [{ id: "where" }, { id: "job" }],
+      questions: [{ id: "who", question: "Which sounds most like you?" }],
     });
     expect(result.reply).toContain("Where will you use it");
   });
 
   it("a student who records lectures is pointed to Copper Notes", async () => {
     model = modelStreaming(
-      calls({ where: "on_the_go", job: "lectures" }),
+      calls({ who: "student", job: "lecture_notes" }),
       says("Copper Notes is the one for you."),
     );
     const result = await ask(
       "I'm a student who records lectures. Which should I get?",
     );
     const [call] = toolCallsOf(result);
-    expect(call.input).toEqual({ where: "on_the_go", job: "lectures" });
+    expect(call.input).toEqual({ who: "student", job: "lecture_notes" });
     expect(call.output).toMatchObject({
       status: "recommendation",
       product: { id: "copper-notes" },

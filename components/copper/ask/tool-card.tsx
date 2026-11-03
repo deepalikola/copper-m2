@@ -37,17 +37,26 @@ function formatDate(iso: string): string {
 const productName = (id: unknown) =>
   getProducts().find((product) => product.id === id)?.name ?? String(id);
 
-const WHERE_LABELS: Record<string, string> = {
-  at_home: "At home",
-  on_the_go: "On the go",
+const WHO_LABELS: Record<string, string> = {
+  homemaker: "Homemaker or family manager",
+  retiree_snowbird: "Retiree or snowbird",
+  student: "Student",
+  professional: "Busy professional",
+  heavy_ai_user: "Heavy AI user",
 };
 
 const JOB_LABELS: Record<string, string> = {
-  home_control: "Smart-home control",
-  household_memory: "Household memory",
-  storm_alerts: "Storm alerts",
-  meetings: "Meetings",
-  lectures: "Lectures",
+  lists_and_reminders: "Lists and reminders",
+  run_the_house: "Running the house",
+  weather_alerts: "Weather alerts",
+  planning_and_ideas: "Planning and ideas",
+  away_for_summer: "Looking after the house while away",
+  lecture_notes: "Notes in lectures",
+  quick_ideas: "Capturing quick ideas",
+  meeting_summaries: "Meeting summaries",
+  searchable_history: "Searching past meetings",
+  complex_questions: "The smartest answers",
+  long_summaries: "Long-form summaries",
 };
 
 const labelOf = (labels: Record<string, string>, value: unknown) =>
@@ -127,7 +136,7 @@ function Sent({ tool, input }: { tool: string; input: unknown }) {
     return (
       <Rows
         rows={[
-          ["Where", labelOf(WHERE_LABELS, input.where)],
+          ["Who", labelOf(WHO_LABELS, input.who)],
           ["Main job", labelOf(JOB_LABELS, input.job)],
           [
             "Budget",
@@ -279,6 +288,10 @@ function Result({ tool, output }: { tool: string; output: unknown }) {
       isObj(output.why)
     ) {
       const also = isObj(output.alsoConsider) ? output.alsoConsider : null;
+      const examples = Array.isArray(output.examples)
+        ? (output.examples as Obj[])
+        : [];
+      const plus = isObj(output.plus) ? output.plus : null;
       return (
         <div className="flex flex-col gap-1 text-sm">
           <p className="text-primary text-lg font-extrabold">
@@ -291,8 +304,24 @@ function Result({ tool, output }: { tool: string; output: unknown }) {
               {String(output.why.description)}
             </span>
           </p>
-          {typeof output.fitNote === "string" && (
-            <p className="text-muted-foreground">{output.fitNote}</p>
+          {examples.length > 0 && (
+            <ul className="mt-1 flex flex-col gap-1">
+              {examples.map((example) => (
+                <li key={String(example.say)}>
+                  <span className="font-medium">
+                    &ldquo;{String(example.say)}&rdquo;
+                  </span>{" "}
+                  <span className="text-muted-foreground">
+                    {String(example.result)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {plus && (
+            <p className="text-muted-foreground">
+              {String(plus.reason)} {String(plus.priceNote)}
+            </p>
           )}
           {typeof output.budgetNote === "string" && (
             <p className="text-muted-foreground">{output.budgetNote}</p>

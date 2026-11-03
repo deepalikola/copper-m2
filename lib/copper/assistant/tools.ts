@@ -65,30 +65,46 @@ function toCents(amount: number): number {
   return Math.round((amount + Number.EPSILON) * 100) / 100;
 }
 
-export type RecommendWhere = "at_home" | "on_the_go";
+export type RecommendWho =
+  | "homemaker"
+  | "retiree_snowbird"
+  | "student"
+  | "professional"
+  | "heavy_ai_user";
+
 export type RecommendJob =
-  | "home_control"
-  | "household_memory"
-  | "storm_alerts"
-  | "meetings"
-  | "lectures";
+  | "lists_and_reminders"
+  | "run_the_house"
+  | "weather_alerts"
+  | "planning_and_ideas"
+  | "away_for_summer"
+  | "lecture_notes"
+  | "quick_ideas"
+  | "meeting_summaries"
+  | "searchable_history"
+  | "complex_questions"
+  | "long_summaries";
 
 export type RecommendProductInput = {
-  where?: RecommendWhere;
+  who?: RecommendWho;
   job?: RecommendJob;
   maxBudgetUsd?: number;
 };
 
 export type RecommendQuestion = {
-  id: "where" | "job";
+  id: "who" | "job";
   question: string;
   options: { value: string; label: string }[];
 };
+
+/** One real thing a shopper can say or do, and what Copper does with it. */
+export type RecommendExample = { say: string; result: string };
 
 export type Recommendation =
   | { status: "needs_answers"; questions: RecommendQuestion[] }
   | {
       status: "recommendation";
+      who: RecommendWho;
       product: {
         id: ProductId;
         name: string;
@@ -96,11 +112,16 @@ export type Recommendation =
         priceUsd: number;
         colors: string[];
       };
-      /** The catalog feature that fits what the shopper wants to do. */
+      /** The Copper feature that fits what the shopper wants to do. */
       why: { feature: string; description: string };
-      otherFeatures: string[];
-      fit: "great" | "partial";
-      fitNote: string | null;
+      /** How Copper fits this kind of shopper's day. */
+      examples: RecommendExample[];
+      /** Set when the job needs, or gets much better with, Copper Plus. */
+      plus: {
+        required: boolean;
+        priceNote: string;
+        reason: string;
+      } | null;
       withinBudget: boolean | null;
       budgetNote: string | null;
       alsoConsider: { id: ProductId; name: string; priceUsd: number };
@@ -238,109 +259,361 @@ export async function checkAvailability(
   return { status: "ok", product: product.name, colors };
 }
 
-// recommend_product: the questions Copper asks a shopper who can't decide, and
-// what each answer points to. The product facts come from the catalog; only the
-// mapping from "what do you want to do?" to a catalog feature lives here.
-const WHERE_OPTIONS = [
-  { value: "at_home", label: "At home" },
-  { value: "on_the_go", label: "On the go (meetings, class, coffee shops)" },
-] as const;
-
-const JOBS: Record<
-  RecommendJob,
-  { productId: ProductId; feature: string; label: string }
-> = {
-  home_control: {
-    productId: "copper-home",
-    feature: "Smart-home control",
-    label: "Control my lights, thermostat, sprinklers and garage",
+// recommend_product: works out who the shopper is, what they want help with,
+// and which product fits. Product names, prices and colors come from the
+// catalog. The "who it's for" groups, the feature each job points to, and the
+// examples below are taken from the Product Bible (Sections 3, 4.1, 4.2 and
+// 4.3), so every example is something Copper really does. Dinner ideas are an
+// everyday question to Copper Home's assistant, not a recipe feature.
+const WHO: Record<RecommendWho, { label: string; jobs: RecommendJob[] }> = {
+  homemaker: {
+    label: "A homemaker or family manager",
+    jobs: [
+      "lists_and_reminders",
+      "run_the_house",
+      "weather_alerts",
+      "planning_and_ideas",
+    ],
   },
-  household_memory: {
-    productId: "copper-home",
-    feature: "Household Memory",
-    label: "Remember household things for me",
+  retiree_snowbird: {
+    label: "A retiree or snowbird",
+    jobs: [
+      "away_for_summer",
+      "weather_alerts",
+      "lists_and_reminders",
+      "run_the_house",
+    ],
   },
-  storm_alerts: {
-    productId: "copper-home",
-    feature: "Monsoon Mode",
-    label: "Warn me about storms and protect the yard",
+  student: {
+    label: "A student",
+    jobs: ["lecture_notes", "quick_ideas"],
   },
-  meetings: {
-    productId: "copper-notes",
-    feature: "Meeting Mode",
-    label: "Summarize my meetings",
+  professional: {
+    label: "A busy professional",
+    jobs: ["meeting_summaries", "quick_ideas", "searchable_history"],
   },
-  lectures: {
-    productId: "copper-notes",
-    feature: "Lecture Mode",
-    label: "Take notes in lectures",
+  heavy_ai_user: {
+    label: "A heavy AI user",
+    jobs: ["complex_questions", "long_summaries"],
   },
 };
 
-const WHERE_PRODUCT: Record<RecommendWhere, ProductId> = {
-  at_home: "copper-home",
-  on_the_go: "copper-notes",
+type JobInfo = {
+  productId: ProductId;
+  label: string;
+  /** The catalog feature this job is about, if the catalog lists it. */
+  catalogFeature?: string;
+  /** Used when the catalog doesn't list the feature (Product Bible wording). */
+  feature?: string;
+  description?: string;
+  examples: RecommendExample[];
+  plus?: { required: boolean; reason: string };
 };
 
-const RECOMMEND_QUESTIONS: Record<"where" | "job", RecommendQuestion> = {
-  where: {
-    id: "where",
-    question: "Where will you use it most?",
-    options: [...WHERE_OPTIONS],
+const JOBS: Record<RecommendJob, JobInfo> = {
+  lists_and_reminders: {
+    productId: "copper-home",
+    label: "Lists and reminders",
+    catalogFeature: "Household Memory",
+    examples: [
+      {
+        say: "Hey Copper, add coriander to the shopping list.",
+        result: "Copper adds it to your list.",
+      },
+      {
+        say: "Copper, remember the pool guy comes Thursdays.",
+        result:
+          "Household Memory keeps it. You can view and delete it in the Copper app.",
+      },
+      {
+        say: "Set a timer for 10 minutes.",
+        result: "Done on the device itself, with no cloud trip.",
+      },
+    ],
   },
-  job: {
+  run_the_house: {
+    productId: "copper-home",
+    label: "Running the house",
+    catalogFeature: "Smart-home control",
+    examples: [
+      {
+        say: "Turn off the lights.",
+        result: "Copper runs your lights, thermostat, sprinklers and garage.",
+      },
+      {
+        say: "Rain is coming.",
+        result: "Monsoon Mode pauses the sprinklers for you.",
+      },
+    ],
+  },
+  weather_alerts: {
+    productId: "copper-home",
+    label: "Weather alerts",
+    catalogFeature: "Monsoon Mode",
+    examples: [
+      {
+        say: "A storm is on the way.",
+        result: "Monsoon Mode sends a storm alert and pauses the sprinklers.",
+      },
+      {
+        say: "A dust storm is coming.",
+        result: "Haboob Alert warns you and reminds you to close the windows.",
+      },
+      {
+        say: "It's dangerously hot.",
+        result:
+          "Heat Check alerts you, reminds you to bring pets inside and to check the back seat before leaving the car.",
+      },
+    ],
+  },
+  planning_and_ideas: {
+    productId: "copper-home",
+    label: "Planning and ideas",
+    feature: "Everyday questions and planning",
+    description:
+      "Ask Copper Home questions in plain English or Spanish. Everyday questions are free. Complex planning uses Copper Plus.",
+    examples: [
+      {
+        say: "What can I cook tonight?",
+        result: "An everyday question: Copper answers it like any other.",
+      },
+      {
+        say: "Plan a 3-day Sedona trip for two kids who hate hiking.",
+        result:
+          "Complex planning goes to the Refined tier, which is part of Copper Plus.",
+      },
+      {
+        say: "Explain my water bill.",
+        result: "Another complex question for the Refined tier.",
+      },
+    ],
+    plus: {
+      required: false,
+      reason: "Trip planning and bill explanations use the Refined tier.",
+    },
+  },
+  away_for_summer: {
+    productId: "copper-home",
+    label: "Looking after the house while away",
+    feature: "Snowbird Mode",
+    description:
+      "Pauses routines and checks in on the house while you're away for the summer.",
+    examples: [
+      {
+        say: "I'm leaving for the summer.",
+        result:
+          "Snowbird Mode pauses your routines and checks in on the house.",
+      },
+      {
+        say: "It's dangerously hot.",
+        result: "Heat Check alerts you.",
+      },
+    ],
+  },
+  lecture_notes: {
+    productId: "copper-notes",
+    label: "Notes in lectures",
+    catalogFeature: "Lecture Mode",
+    examples: [
+      {
+        say: "Clip it on and tap the center button.",
+        result:
+          "Lecture Mode turns the lecture into organized notes with key terms.",
+      },
+      {
+        say: "Share my notes with a classmate.",
+        result: "Summaries appear in the Copper app and can be shared.",
+      },
+      {
+        say: "Recording starts.",
+        result:
+          "The Consent Chime plays and the amber ring lights, so people nearby know.",
+      },
+    ],
+  },
+  quick_ideas: {
+    productId: "copper-notes",
+    label: "Capturing quick ideas",
+    feature: "Idea Mode",
+    description: "Quick voice memos turned into tidy notes.",
+    examples: [
+      {
+        say: "Tap once and say your idea out loud.",
+        result: "Idea Mode turns the voice memo into a tidy note.",
+      },
+      {
+        say: "Open the Copper app.",
+        result: "The summary is waiting there, ready to share.",
+      },
+    ],
+  },
+  meeting_summaries: {
+    productId: "copper-notes",
+    label: "Meeting summaries",
+    catalogFeature: "Meeting Mode",
+    examples: [
+      {
+        say: "Clip it on before the meeting starts.",
+        result:
+          "Meeting Mode gives you a summary, the decisions and the action items.",
+      },
+      {
+        say: "Recording starts.",
+        result:
+          "The Consent Chime plays and the amber ring lights, so everyone in the room knows.",
+      },
+    ],
+  },
+  searchable_history: {
+    productId: "copper-notes",
+    label: "Searching past meetings",
+    feature: "Searchable meeting history",
+    description:
+      "Long-form summaries and a searchable history of your meetings, with Copper Plus.",
+    examples: [
+      {
+        say: "What did we decide about the budget last month?",
+        result: "With Copper Plus, your meeting history is searchable.",
+      },
+      {
+        say: "Summarize this long meeting.",
+        result: "Copper Plus unlocks long-form summaries.",
+      },
+    ],
+    plus: {
+      required: true,
+      reason:
+        "Searchable history and long-form summaries are Copper Plus features.",
+    },
+  },
+  complex_questions: {
+    productId: "copper-home",
+    label: "The smartest answers",
+    feature: "Refined answers",
+    description:
+      "Copper Plus unlocks Refined, frontier models in the Copper Cloud, for complex questions and planning, with the longest memory.",
+    examples: [
+      {
+        say: "Plan a 3-day Sedona trip for two kids who hate hiking.",
+        result: "A Refined answer, with Copper Plus.",
+      },
+      {
+        say: "Explain my water bill.",
+        result: "Another Refined answer.",
+      },
+    ],
+    plus: {
+      required: true,
+      reason: "Refined answers and the longest memory come with Copper Plus.",
+    },
+  },
+  long_summaries: {
+    productId: "copper-notes",
+    label: "Long-form summaries",
+    feature: "Long-form summaries",
+    description: "Copper Plus unlocks long-form summaries on Copper Notes.",
+    examples: [
+      {
+        say: "Summarize this two-hour session.",
+        result: "A long-form summary, with Copper Plus.",
+      },
+      {
+        say: "Find that meeting from last spring.",
+        result: "Searchable meeting history, with Copper Plus.",
+      },
+    ],
+    plus: {
+      required: true,
+      reason: "Long-form summaries are a Copper Plus feature.",
+    },
+  },
+};
+
+const WHO_QUESTION: RecommendQuestion = {
+  id: "who",
+  question: "Which sounds most like you?",
+  options: Object.entries(WHO).map(([value, { label }]) => ({ value, label })),
+};
+
+function jobQuestion(who: RecommendWho): RecommendQuestion {
+  return {
     id: "job",
-    question: "What's the main thing you want help with?",
-    options: Object.entries(JOBS).map(([value, { label }]) => ({
-      value,
-      label,
+    question: "What would you most like help with?",
+    options: WHO[who].jobs.map((job) => ({
+      value: job,
+      label: JOBS[job].label,
     })),
-  },
-};
+  };
+}
 
 /** The recommend_product contract: three optional answers, nothing else. */
 export const recommendProductInput: z.ZodType<RecommendProductInput> =
   z.strictObject({
-    where: z.enum(["at_home", "on_the_go"]).optional(),
+    who: z
+      .enum([
+        "homemaker",
+        "retiree_snowbird",
+        "student",
+        "professional",
+        "heavy_ai_user",
+      ])
+      .optional(),
     job: z
       .enum([
-        "home_control",
-        "household_memory",
-        "storm_alerts",
-        "meetings",
-        "lectures",
+        "lists_and_reminders",
+        "run_the_house",
+        "weather_alerts",
+        "planning_and_ideas",
+        "away_for_summer",
+        "lecture_notes",
+        "quick_ideas",
+        "meeting_summaries",
+        "searchable_history",
+        "complex_questions",
+        "long_summaries",
       ])
       .optional(),
     maxBudgetUsd: z.number().min(0).max(10000).optional(),
   });
 
 /**
- * recommend_product: asks for what it still needs to know, then points the
- * shopper to the product that fits. Copper puts the questions to the shopper
- * in chat and calls this again with their answers.
+ * recommend_product: asks who the shopper is, then what they want help with,
+ * then points them to the product that fits and shows how Copper would help in
+ * their day. Copper (or the robot bubble in the panel) puts the questions to
+ * the shopper and calls this again with their answers.
  */
 export function recommendProduct(input: RecommendProductInput): Recommendation {
-  const missing = (["where", "job"] as const).filter((id) => !input[id]);
-  if (missing.length > 0) {
-    return {
-      status: "needs_answers",
-      questions: missing.map((id) => RECOMMEND_QUESTIONS[id]),
-    };
+  if (!input.who) {
+    return { status: "needs_answers", questions: [WHO_QUESTION] };
+  }
+  // The jobs offered depend on who they are; anything else is asked again.
+  if (!input.job || !WHO[input.who].jobs.includes(input.job)) {
+    return { status: "needs_answers", questions: [jobQuestion(input.who)] };
   }
 
   const catalog = getProducts();
   const find = (id: ProductId) => catalog.find((product) => product.id === id)!;
 
-  // What they want to do decides it; where they'll use it says how well it fits.
-  const job = JOBS[input.job!];
+  const job = JOBS[input.job];
   const product = find(job.productId);
   const other = find(
     job.productId === "copper-home" ? "copper-notes" : "copper-home",
   );
-  const matched = product.features.find(
-    (feature) => feature.name === job.feature,
-  )!;
-  const fits = WHERE_PRODUCT[input.where!] === product.id;
+  const catalogFeature = job.catalogFeature
+    ? product.features.find((feature) => feature.name === job.catalogFeature)
+    : undefined;
+  const why = catalogFeature
+    ? { feature: catalogFeature.name, description: catalogFeature.description }
+    : { feature: job.feature!, description: job.description! };
+
+  const plusPlan = getPlans().find((plan) => plan.id === "copper-plus")!;
+  const plus = job.plus
+    ? {
+        required: job.plus.required,
+        reason: job.plus.reason,
+        priceNote: `${plusPlan.name} is ${formatUsd(plusPlan.monthlyUsd)}/month or ${formatUsd(plusPlan.annualUsd)}/year.`,
+      }
+    : null;
 
   const withinBudget =
     input.maxBudgetUsd === undefined
@@ -357,6 +630,7 @@ export function recommendProduct(input: RecommendProductInput): Recommendation {
 
   return {
     status: "recommendation",
+    who: input.who,
     product: {
       id: product.id,
       name: product.name,
@@ -364,16 +638,9 @@ export function recommendProduct(input: RecommendProductInput): Recommendation {
       priceUsd: product.priceUsd,
       colors: product.colors,
     },
-    why: { feature: matched.name, description: matched.description },
-    otherFeatures: product.features
-      .filter((feature) => feature.name !== matched.name)
-      .map((feature) => feature.name),
-    fit: fits ? "great" : "partial",
-    fitNote: fits
-      ? null
-      : `You said you'd use it ${
-          input.where === "at_home" ? "at home" : "on the go"
-        }, but ${product.name} is the one built for "${job.label.toLowerCase()}".`,
+    why,
+    examples: job.examples,
+    plus,
     withinBudget,
     budgetNote,
     alsoConsider: { id: other.id, name: other.name, priceUsd: other.priceUsd },
@@ -408,7 +675,7 @@ export const copperTools = {
   }),
   recommend_product: tool({
     description:
-      "Help a shopper who can't decide between Copper Home and Copper Notes: with no answers it returns the questions to ask them (where they'll use it, what they want help with), and once you pass their answers it returns the product that fits and why.",
+      "Help a shopper who can't decide between Copper Home and Copper Notes: with no answers it returns the question to ask them (who they are, then what they want help with), and once you pass their answers it returns the product that fits, why, and real examples of how Copper helps someone like them.",
     inputSchema: recommendProductInput,
     execute: async (input) => recommendProduct(input),
   }),

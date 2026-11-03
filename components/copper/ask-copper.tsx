@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { ArrowUpIcon, MessageCircleIcon } from "lucide-react";
 import { Answer } from "@/components/copper/ask/answer";
+import { Guide } from "@/components/copper/ask/guide";
 import { SetupRequired } from "@/components/setup-required";
 import {
   Sheet,
@@ -204,6 +205,8 @@ export function AskCopper({ aiConfigured }: { aiConfigured: boolean }) {
                       : "Tools are off. Copper answers from memory alone, so watch for guesses."}
                   </p>
                 )}
+                {/* Copper the robot starts the "help me choose" questions himself */}
+                {turns.length === 0 && useTools && <Guide />}
                 {turns.map((turn) => (
                   <section key={turn.id} className="space-y-3">
                     <p className="bg-primary text-primary-foreground ml-auto w-fit max-w-[85%] rounded-2xl rounded-tr-sm px-3 py-2 text-sm">
