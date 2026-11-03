@@ -5,6 +5,7 @@
 // AI model. Each click asks guideStep, which runs the recommend_product tool.
 import { useState } from "react";
 import Image from "next/image";
+import { FeatureVisuals } from "@/components/copper/ask/feature-visuals";
 import { Button } from "@/components/ui/button";
 import { guideStep } from "@/lib/copper/assistant/guide";
 import type {
@@ -199,6 +200,11 @@ export function Guide() {
                 </li>
               ))}
             </ul>
+
+            <FeatureVisuals
+              visual={view.result.visual}
+              productName={view.result.product.name}
+            />
 
             {view.result.plus && (
               <p className="text-muted-foreground">

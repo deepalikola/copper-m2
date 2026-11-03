@@ -293,6 +293,135 @@ describe("recommend_product", () => {
   });
 });
 
+describe("recommend_product visuals", () => {
+  const combos = [
+    ["homemaker", "lists_and_reminders"],
+    ["homemaker", "run_the_house"],
+    ["homemaker", "weather_alerts"],
+    ["homemaker", "planning_and_ideas"],
+    ["retiree_snowbird", "away_for_summer"],
+    ["student", "lecture_notes"],
+    ["student", "quick_ideas"],
+    ["professional", "meeting_summaries"],
+    ["professional", "searchable_history"],
+    ["heavy_ai_user", "complex_questions"],
+    ["heavy_ai_user", "long_summaries"],
+  ] as const;
+
+  it("lights up the features and steps a homemaker's list question uses", async () => {
+    const { visual } = await recommend({
+      who: "homemaker",
+      job: "lists_and_reminders",
+    });
+    expect(
+      visual.features.filter((f) => f.highlighted).map((f) => f.name),
+    ).toEqual(["Household Memory", "Copper app"]);
+    expect(visual.steps.map((step) => step.highlighted)).toEqual([
+      true,
+      true,
+      true,
+      false,
+      true,
+    ]);
+  });
+
+  it("draws the Home map for Copper Home and the Notes map for Copper Notes", async () => {
+    const home = await recommend({ who: "homemaker", job: "weather_alerts" });
+    expect(home.visual.features.map((f) => f.name)).toEqual([
+      "Household Memory",
+      "Smart-home control",
+      "Monsoon Mode",
+      "Haboob Alert",
+      "Heat Check",
+      "Snowbird Mode",
+      "Refined answers",
+      "Copper app",
+    ]);
+    const notes = await recommend({ who: "student", job: "lecture_notes" });
+    expect(notes.visual.features.map((f) => f.name)).toEqual([
+      "Meeting Mode",
+      "Lecture Mode",
+      "Long-form summaries",
+      "Idea Mode",
+      "Consent Chime",
+      "Searchable history",
+      "Copper app",
+    ]);
+  });
+
+  it("badges only the Copper Plus features", async () => {
+    const home = await recommend({
+      who: "heavy_ai_user",
+      job: "complex_questions",
+    });
+    expect(
+      home.visual.features.filter((f) => f.plus).map((f) => f.name),
+    ).toEqual(["Refined answers"]);
+    const notes = await recommend({
+      who: "professional",
+      job: "searchable_history",
+    });
+    expect(
+      notes.visual.features.filter((f) => f.plus).map((f) => f.name),
+    ).toEqual(["Long-form summaries", "Searchable history"]);
+    expect(notes.visual.features.filter((f) => f.app)).toHaveLength(1);
+  });
+
+  it("every job lights at least one real feature and one real step", async () => {
+    for (const [who, job] of combos) {
+      const { visual } = await recommend({ who, job });
+      expect(
+        visual.features.some((f) => f.highlighted),
+        `${who} / ${job} feature`,
+      ).toBe(true);
+      expect(
+        visual.steps.some((step) => step.highlighted),
+        `${who} / ${job} step`,
+      ).toBe(true);
+    }
+  });
+
+  it("uses the alerts strip for weather, the away strip for snowbirds and the notes strip for Copper Notes", async () => {
+    const titles = async (who: never, job: never) =>
+      (await recommend({ who, job })).visual.steps.map((step) => step.title);
+    expect(
+      await titles("homemaker" as never, "weather_alerts" as never),
+    ).toEqual([
+      "The weather changes",
+      "Copper Home notices",
+      "You get an alert",
+      "Copper helps",
+    ]);
+    expect(
+      await titles("retiree_snowbird" as never, "away_for_summer" as never),
+    ).toEqual([
+      "You leave for the summer",
+      "Routines pause",
+      "Copper checks in",
+    ]);
+    expect(
+      (await titles("student" as never, "lecture_notes" as never))[1],
+    ).toBe("Transcribed on the device");
+  });
+
+  it("marks where each step runs, and flags the Refined step as Copper Plus", async () => {
+    const { visual } = await recommend({
+      who: "homemaker",
+      job: "planning_and_ideas",
+    });
+    expect(visual.steps.map((step) => step.tier)).toEqual([
+      null,
+      "device",
+      "raw_ore",
+      "refined",
+      null,
+    ]);
+    const refined = visual.steps.find((step) => step.tier === "refined");
+    expect(refined?.plus).toBe(true);
+    expect(visual.steps.filter((step) => step.plus)).toHaveLength(1);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The chat flow: the model picks the tool, the app runs it, Copper answers.
 // ---------------------------------------------------------------------------

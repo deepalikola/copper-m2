@@ -97,6 +97,27 @@ export type RecommendQuestion = {
   options: { value: string; label: string }[];
 };
 
+/** One feature on the "how the features connect" map. */
+export type VisualFeature = {
+  name: string;
+  /** Needs Copper Plus. */
+  plus: boolean;
+  /** The Copper app, shown as part of the map. */
+  app: boolean;
+  /** The shopper's choice uses it. */
+  highlighted: boolean;
+};
+
+/** One step in the "what happens behind the scenes" strip. */
+export type VisualStep = {
+  title: string;
+  detail: string;
+  /** Where it runs, when that matters. */
+  tier: "device" | "raw_ore" | "refined" | null;
+  plus: boolean;
+  highlighted: boolean;
+};
+
 /** One real thing a shopper can say or do, and what Copper does with it. */
 export type RecommendExample = { say: string; result: string };
 
@@ -116,6 +137,8 @@ export type Recommendation =
       why: { feature: string; description: string };
       /** How Copper fits this kind of shopper's day. */
       examples: RecommendExample[];
+      /** Two pictures: how the product's features connect, and how it works. */
+      visual: { features: VisualFeature[]; steps: VisualStep[] };
       /** Set when the job needs, or gets much better with, Copper Plus. */
       plus: {
         required: boolean;
@@ -308,11 +331,19 @@ type JobInfo = {
   description?: string;
   examples: RecommendExample[];
   plus?: { required: boolean; reason: string };
+  /** Which "behind the scenes" strip to draw, and which steps this job uses. */
+  flow: FlowKey;
+  focus: number[];
+  /** Which features on the map this job uses. */
+  highlight: string[];
 };
 
 const JOBS: Record<RecommendJob, JobInfo> = {
   lists_and_reminders: {
     productId: "copper-home",
+    flow: "voice",
+    focus: [0, 1, 2, 4],
+    highlight: ["Household Memory", "Copper app"],
     label: "Lists and reminders",
     catalogFeature: "Household Memory",
     examples: [
@@ -333,6 +364,9 @@ const JOBS: Record<RecommendJob, JobInfo> = {
   },
   run_the_house: {
     productId: "copper-home",
+    flow: "voice",
+    focus: [0, 1],
+    highlight: ["Smart-home control", "Monsoon Mode"],
     label: "Running the house",
     catalogFeature: "Smart-home control",
     examples: [
@@ -348,6 +382,9 @@ const JOBS: Record<RecommendJob, JobInfo> = {
   },
   weather_alerts: {
     productId: "copper-home",
+    flow: "alerts",
+    focus: [0, 1, 2, 3],
+    highlight: ["Monsoon Mode", "Haboob Alert", "Heat Check"],
     label: "Weather alerts",
     catalogFeature: "Monsoon Mode",
     examples: [
@@ -368,6 +405,9 @@ const JOBS: Record<RecommendJob, JobInfo> = {
   },
   planning_and_ideas: {
     productId: "copper-home",
+    flow: "voice",
+    focus: [0, 2, 3],
+    highlight: ["Refined answers"],
     label: "Planning and ideas",
     feature: "Everyday questions and planning",
     description:
@@ -394,6 +434,9 @@ const JOBS: Record<RecommendJob, JobInfo> = {
   },
   away_for_summer: {
     productId: "copper-home",
+    flow: "away",
+    focus: [0, 1, 2],
+    highlight: ["Snowbird Mode", "Heat Check"],
     label: "Looking after the house while away",
     feature: "Snowbird Mode",
     description:
@@ -412,6 +455,9 @@ const JOBS: Record<RecommendJob, JobInfo> = {
   },
   lecture_notes: {
     productId: "copper-notes",
+    flow: "notes",
+    focus: [0, 1, 2, 3],
+    highlight: ["Lecture Mode", "Consent Chime", "Copper app"],
     label: "Notes in lectures",
     catalogFeature: "Lecture Mode",
     examples: [
@@ -433,6 +479,9 @@ const JOBS: Record<RecommendJob, JobInfo> = {
   },
   quick_ideas: {
     productId: "copper-notes",
+    flow: "notes",
+    focus: [0, 1, 2, 3],
+    highlight: ["Idea Mode", "Copper app"],
     label: "Capturing quick ideas",
     feature: "Idea Mode",
     description: "Quick voice memos turned into tidy notes.",
@@ -449,6 +498,9 @@ const JOBS: Record<RecommendJob, JobInfo> = {
   },
   meeting_summaries: {
     productId: "copper-notes",
+    flow: "notes",
+    focus: [0, 1, 2, 3],
+    highlight: ["Meeting Mode", "Consent Chime", "Copper app"],
     label: "Meeting summaries",
     catalogFeature: "Meeting Mode",
     examples: [
@@ -466,6 +518,9 @@ const JOBS: Record<RecommendJob, JobInfo> = {
   },
   searchable_history: {
     productId: "copper-notes",
+    flow: "notes",
+    focus: [2, 3],
+    highlight: ["Searchable history", "Copper app"],
     label: "Searching past meetings",
     feature: "Searchable meeting history",
     description:
@@ -488,6 +543,9 @@ const JOBS: Record<RecommendJob, JobInfo> = {
   },
   complex_questions: {
     productId: "copper-home",
+    flow: "voice",
+    focus: [0, 3],
+    highlight: ["Refined answers"],
     label: "The smartest answers",
     feature: "Refined answers",
     description:
@@ -509,6 +567,9 @@ const JOBS: Record<RecommendJob, JobInfo> = {
   },
   long_summaries: {
     productId: "copper-notes",
+    flow: "notes",
+    focus: [2],
+    highlight: ["Long-form summaries"],
     label: "Long-form summaries",
     feature: "Long-form summaries",
     description: "Copper Plus unlocks long-form summaries on Copper Notes.",
@@ -527,6 +588,154 @@ const JOBS: Record<RecommendJob, JobInfo> = {
       reason: "Long-form summaries are a Copper Plus feature.",
     },
   },
+};
+
+type FlowKey = "voice" | "alerts" | "away" | "notes";
+type FlowStep = Omit<VisualStep, "highlighted">;
+
+// How each product works behind the scenes, in the Product Bible's words
+// (Section 3, "The AI tiers", and Sections 4.1 and 4.2).
+const FLOWS: Record<FlowKey, FlowStep[]> = {
+  voice: [
+    {
+      title: "You speak",
+      detail: "Say \u201cHey Copper\u201d, then ask or give a command.",
+      tier: null,
+      plus: false,
+    },
+    {
+      title: "On the device",
+      detail:
+        "Simple commands, like lights and timers, are handled on the device itself.",
+      tier: "device",
+      plus: false,
+    },
+    {
+      title: "Raw Ore",
+      detail:
+        "Everyday questions, like adding to your list, go to a low-cost cloud model.",
+      tier: "raw_ore",
+      plus: false,
+    },
+    {
+      title: "Refined",
+      detail:
+        "Complex questions and planning go to frontier models in the Copper Cloud.",
+      tier: "refined",
+      plus: true,
+    },
+    {
+      title: "Copper app",
+      detail: "View and delete what Copper remembers.",
+      tier: null,
+      plus: false,
+    },
+  ],
+  alerts: [
+    {
+      title: "The weather changes",
+      detail: "A storm, a dust storm or dangerous heat is on the way.",
+      tier: null,
+      plus: false,
+    },
+    {
+      title: "Copper Home notices",
+      detail:
+        "Monsoon Mode, Haboob Alert and Heat Check keep an eye on the Arizona weather.",
+      tier: null,
+      plus: false,
+    },
+    {
+      title: "You get an alert",
+      detail:
+        "A storm alert, a reminder to close the windows, or a heat warning.",
+      tier: null,
+      plus: false,
+    },
+    {
+      title: "Copper helps",
+      detail:
+        "It pauses the sprinklers when rain is coming, and reminds you about pets and the back seat in the heat.",
+      tier: null,
+      plus: false,
+    },
+  ],
+  away: [
+    {
+      title: "You leave for the summer",
+      detail: "Turn on Snowbird Mode before you go.",
+      tier: null,
+      plus: false,
+    },
+    {
+      title: "Routines pause",
+      detail: "Snowbird Mode pauses your routines while you're away.",
+      tier: null,
+      plus: false,
+    },
+    {
+      title: "Copper checks in",
+      detail: "It checks in on the house for you.",
+      tier: null,
+      plus: false,
+    },
+  ],
+  notes: [
+    {
+      title: "Clip on and tap",
+      detail:
+        "The amber ring lights and the Consent Chime plays, so people nearby know.",
+      tier: null,
+      plus: false,
+    },
+    {
+      title: "Transcribed on the device",
+      detail:
+        "The recording is transcribed on the device. Only the text goes to the cloud.",
+      tier: "device",
+      plus: false,
+    },
+    {
+      title: "Summary",
+      detail:
+        "Standard summaries use Raw Ore. Copper Plus adds long-form summaries with Refined.",
+      tier: "raw_ore",
+      plus: false,
+    },
+    {
+      title: "Copper app",
+      detail:
+        "Read your summary and share it. Copper Plus adds searchable meeting history.",
+      tier: null,
+      plus: false,
+    },
+  ],
+};
+
+type MapNode = { name: string; plus?: boolean; app?: boolean };
+
+// The features around each product on the map. The order matters: the map
+// places them evenly around a ring, so the long names are kept apart.
+const MAPS: Record<ProductId, MapNode[]> = {
+  "copper-home": [
+    { name: "Household Memory" },
+    { name: "Smart-home control" },
+    { name: "Monsoon Mode" },
+    { name: "Haboob Alert" },
+    { name: "Heat Check" },
+    { name: "Snowbird Mode" },
+    { name: "Refined answers", plus: true },
+    { name: "Copper app", app: true },
+  ],
+  "copper-notes": [
+    { name: "Meeting Mode" },
+    { name: "Lecture Mode" },
+    { name: "Long-form summaries", plus: true },
+    { name: "Idea Mode" },
+    { name: "Consent Chime" },
+    { name: "Searchable history", plus: true },
+    { name: "Copper app", app: true },
+  ],
 };
 
 const WHO_QUESTION: RecommendQuestion = {
@@ -640,6 +849,18 @@ export function recommendProduct(input: RecommendProductInput): Recommendation {
     },
     why,
     examples: job.examples,
+    visual: {
+      features: MAPS[product.id].map((node) => ({
+        name: node.name,
+        plus: node.plus ?? false,
+        app: node.app ?? false,
+        highlighted: job.highlight.includes(node.name),
+      })),
+      steps: FLOWS[job.flow].map((step, index) => ({
+        ...step,
+        highlighted: job.focus.includes(index),
+      })),
+    },
     plus,
     withinBudget,
     budgetNote,

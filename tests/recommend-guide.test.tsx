@@ -176,6 +176,79 @@ describe("the Copper robot bubble", () => {
   });
 });
 
+describe("the pictures at the end of the robot flow", () => {
+  async function finishAs(who: string, job: string) {
+    render(<Guide />);
+    fireEvent.click(screen.getByRole("button", { name: "Help me choose" }));
+    fireEvent.click(await screen.findByRole("button", { name: who }));
+    fireEvent.click(await screen.findByRole("button", { name: job }));
+    fireEvent.click(await screen.findByRole("button", { name: "No limit" }));
+    await screen.findByText(/I'd go with/);
+  }
+
+  it("shows the feature map with the shopper's features lit up", async () => {
+    await finishAs("A homemaker or family manager", "Lists and reminders");
+    expect(
+      screen.getByText(/How Copper Home's features connect/),
+    ).toBeInTheDocument();
+    const map = screen.getByRole("img", {
+      name: /Copper Home and its features/,
+    });
+    expect(map.getAttribute("aria-label")).toContain(
+      "Lit up for you: Household Memory, Copper app",
+    );
+    const lit = map.querySelectorAll('g[data-highlighted="true"]');
+    expect([...lit].map((g) => g.textContent?.trim())).toEqual([
+      "Household Memory",
+      "Copper app",
+    ]);
+    // Refined answers is a Copper Plus feature, so it carries the Plus badge.
+    const plusNode = map.querySelector('g[data-plus="true"]');
+    expect(plusNode?.textContent).toContain("Refined answers");
+    expect(plusNode?.textContent).toContain("Plus");
+  });
+
+  it("shows what happens behind the scenes, with the steps used lit up", async () => {
+    await finishAs("A student", "Notes in lectures");
+    expect(
+      screen.getByText("What happens behind the scenes"),
+    ).toBeInTheDocument();
+    const steps = within(screen.getByTestId("how-it-works")).getAllByRole(
+      "listitem",
+    );
+    expect(steps).toHaveLength(4);
+    expect(steps.map((step) => step.getAttribute("data-highlighted"))).toEqual([
+      "true",
+      "true",
+      "true",
+      "true",
+    ]);
+    expect(
+      within(steps[1]).getByText("Transcribed on the device"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Only the text goes to the cloud/),
+    ).toBeInTheDocument();
+  });
+
+  it("dims the steps a job doesn't use and explains the colors", async () => {
+    await finishAs("A homemaker or family manager", "Planning and ideas");
+    const steps = within(screen.getByTestId("how-it-works")).getAllByRole(
+      "listitem",
+    );
+    expect(steps.map((step) => step.getAttribute("data-highlighted"))).toEqual([
+      "true",
+      "false",
+      "true",
+      "true",
+      "false",
+    ]);
+    expect(within(steps[3]).getByText("Plus")).toBeInTheDocument();
+    expect(screen.getByText("Refined (Copper Plus)")).toBeInTheDocument();
+    expect(screen.getByText("Raw Ore (low-cost cloud)")).toBeInTheDocument();
+  });
+});
+
 describe("the robot in the Ask Copper panel", () => {
   it("appears in an empty panel with tools on, and not in the tools-off chat", async () => {
     vi.stubEnv("GOOGLE_GENERATIVE_AI_API_KEY", "AIza-test-key");
